@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+#
+# nonton — watch YouTube in mpv instead of a browser tab.
+# Light on RAM, AV1-aware, with optional cookie auth.
+#
+# Usage:
+#   nonton <url|search query>      play
+#   nonton -q 4k <url>             quality: 4k | 2k | 1080 | 720
+#   nonton --login [browser]       set up cookie auth (default: chrome)
+#   nonton --no-cookies <url>      play without cookies for this run
+#   nonton --help
+
+set -euo pipefail
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nonton"
+CONFIG_FILE="$CONFIG_DIR/config"
+
+# Defaults (overridden by config file)
+COOKIE_BROWSER=""
+QUALITY="1080"
+
+die() { printf 'nonton: %s\n' "$*" >&2; exit 1; }
+
+need_deps() {
+  command -v mpv    >/dev/null 2>&1 || die "mpv not found — brew install mpv"
+  command -v yt-dlp >/dev/null 2>&1 || die "yt-dlp not found — brew install yt-dlp"
+}
+
+load_config() {
+  # shellcheck disable=SC1090
+  [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE" || true
+}
+
+usage() {
+  sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+  exit 0
+}
+
+# Map a quality keyword to a yt-dlp format string.
+# Prefers AV1 (hardware-decoded on Apple Silicon M3+), falls back to any codec.
+build_format() {
+  local q="$1" h
+  case "$q" in
+    4k|2160) h=2160 ;;
+    2k|1440) h=1440 ;;
+    1080|fhd) h=1080 ;;
+    720|hd)  h=720 ;;
+    *) die "unknown quality: $q (use 4k|2k|1080|720)" ;;
+  esac
+  printf 'bestvideo[vcodec^=av01][height<=%s]+bestaudio/bestvideo[height<=%s]+bestaudio/best[height<=%s]/best' "$h" "$h" "$h"
+}
+
+# --login: verify cookie extraction works, then persist the choice.
+cmd_login() {
+  local browser="${1:-chrome}"
+  mkdir -p "$CONFIG_DIR"
+  printf 'Testing cookie extraction from %s ...\n' "$browser"
+  # Big Buck Bunny (4K) — stable, not region-locked; verifies cookie read.
+  if yt-dlp --cookies-from-browser "$browser" --simulate --quiet \
+       "https://www.youtube.com/watch?v=aqz-KE-bpKQ" >/dev/null 2>&1; then
+    printf 'OK — cookies from %s work.\n' "$browser"
+  else
+    printf 'WARN — could not verify cookies from %s.\n' "$browser" >&2
+    printf '       Chrome (v127+) uses app-bound cookie encryption that can block yt-dlp.\n' >&2
+    printf '       If playback fails, try: nonton --login firefox\n' >&2
+  fi
+  {
+    printf 'COOKIE_BROWSER=%s\n' "$browser"
+    printf 'QUALITY=%s\n' "$QUALITY"
+  } > "$CONFIG_FILE"
+  printf 'Saved config: %s\n' "$CONFIG_FILE"
+  exit 0
+}
+
+# Turn a search query into a watch URL. URLs pass through untouched.
+# With fzf installed you get a picker; otherwise the top result plays.
+resolve_input() {
+  local input="$*"
+  if [[ "$input" =~ ^https?:// ]]; then
+    printf '%s' "$input"; return
+  fi
+  if command -v fzf >/dev/null 2>&1; then
+    local pick
+    pick=$(yt-dlp "ytsearch20:$input" --flat-playlist \
+             --print "%(id)s	%(title)s	%(uploader)s	%(duration_string)s" 2>/dev/null \
+           | fzf --with-nth=2.. --delimiter=$'\t' --prompt='nonton> ' --height=40%) \
+      || exit 0
+    printf 'https://www.youtube.com/watch?v=%s' "$(printf '%s' "$pick" | cut -f1)"
+  else
+    local id
+    id=$(yt-dlp "ytsearch1:$input" --flat-playlist --print "%(id)s" 2>/dev/null | head -1)
+    [ -z "$id" ] && die "no result for: $input"
+    printf 'https://www.youtube.com/watch?v=%s' "$id"
+  fi
+}
+
+main() {
+  load_config
+  need_deps
+
+  local use_cookies=1
+  local args=()
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --help|-h) usage ;;
+      --login)   shift; cmd_login "${1:-chrome}" ;;
+      --no-cookies) use_cookies=0; shift ;;
+      -q|--quality) QUALITY="${2:?-q needs a value}"; shift 2 ;;
+      --) shift; while [ $# -gt 0 ]; do args+=("$1"); shift; done ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+
+  [ ${#args[@]} -eq 0 ] && usage
+
+  local url format mpv_opts=()
+  url="$(resolve_input "${args[@]}")"
+  format="$(build_format "$QUALITY")"
+  mpv_opts+=(--ytdl-format="$format")
+
+  if [ "$use_cookies" -eq 1 ] && [ -n "$COOKIE_BROWSER" ]; then
+    mpv_opts+=(--ytdl-raw-options=cookies-from-browser="$COOKIE_BROWSER")
+  fi
+
+  exec mpv "${mpv_opts[@]}" "$url"
+}
+
+main "$@"
