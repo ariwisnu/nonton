@@ -37,8 +37,10 @@ usage() {
   exit 0
 }
 
-# Map a quality keyword to a yt-dlp format string.
-# Prefers AV1 (hardware-decoded on Apple Silicon M3+), falls back to any codec.
+# Map a quality keyword to a yt-dlp -f filter capped at that height.
+# Codec preference is handled separately by format-sort (see main), so the
+# filter only caps resolution — it must NOT short-circuit on codec, or a
+# stream whose AV1 tops out below the cap would never reach a higher-res VP9.
 build_format() {
   local q="$1" h
   case "$q" in
@@ -48,7 +50,7 @@ build_format() {
     720|hd)  h=720 ;;
     *) die "unknown quality: $q (use 4k|2k|1080|720)" ;;
   esac
-  printf 'bestvideo[vcodec^=av01][height<=%s]+bestaudio/bestvideo[height<=%s]+bestaudio/best[height<=%s]/best' "$h" "$h" "$h"
+  printf 'bv*[height<=%s]+ba/b[height<=%s]/b' "$h" "$h"
 }
 
 # --login: verify cookie extraction works, then persist the choice.
@@ -135,14 +137,19 @@ main() {
 
   [ ${#args[@]} -eq 0 ] && usage
 
-  local url format mpv_opts=()
+  local url format mpv_opts=() raw
   url="$(resolve_input "${args[@]}")"
   format="$(build_format "$QUALITY")"
   mpv_opts+=(--ytdl-format="$format")
 
+  # Pick highest resolution first, then AV1 as a tiebreaker among equal-res
+  # formats (hardware-decoded on Apple Silicon M3+). %15% is mpv's length-prefix
+  # escape so the comma inside the value isn't parsed as a second raw-option.
+  raw="format-sort=%15%res,vcodec:av01"
   if [ "$use_cookies" -eq 1 ] && [ -n "$COOKIE_BROWSER" ]; then
-    mpv_opts+=(--ytdl-raw-options=cookies-from-browser="$COOKIE_BROWSER")
+    raw="$raw,cookies-from-browser=$COOKIE_BROWSER"
   fi
+  mpv_opts+=(--ytdl-raw-options="$raw")
 
   exec mpv "${mpv_opts[@]}" "$url"
 }
