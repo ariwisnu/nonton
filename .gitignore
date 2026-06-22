@@ -1,0 +1,10 @@
+# nonton local config (may contain cookie paths)
+.config/
+*.log
+
+# macOS
+.DS_Store
+
+# cookies — NEVER commit
+cookies.txt
+*.cookies
