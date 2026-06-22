@@ -5,6 +5,7 @@
 #
 # Usage:
 #   nonton <url|search query>      play
+#   nonton <name|@handle>          play that channel's live stream
 #   nonton -q 4k <url>             quality: 4k | 2k | 1080 | 720
 #   nonton --login [browser]       set up cookie auth (default: chrome)
 #   nonton --no-cookies <url>      play without cookies for this run
@@ -32,7 +33,7 @@ load_config() {
 }
 
 usage() {
-  sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 }
 
@@ -72,12 +73,32 @@ cmd_login() {
   exit 0
 }
 
-# Turn a search query into a watch URL. URLs pass through untouched.
-# With fzf installed you get a picker; otherwise the top result plays.
+# Registered channel shortcuts: short name -> @handle. Add a case per channel.
+channel_handle() {
+  case "$1" in
+    windah) printf '@WindahBasudara' ;;
+    *) return 1 ;;
+  esac
+}
+
+# Resolve user input to a URL for mpv/yt-dlp:
+#   - full URL                            -> passed through untouched
+#   - registered name / @handle (1 token) -> that channel's live stream
+#   - anything else                       -> YouTube search
+# With fzf installed search gives a picker; otherwise the top result plays.
 resolve_input() {
-  local input="$*"
+  local input="$*" handle
   if [[ "$input" =~ ^https?:// ]]; then
     printf '%s' "$input"; return
+  fi
+  if [[ "$input" =~ ^www\. ]]; then
+    printf 'https://%s' "$input"; return
+  fi
+  if handle=$(channel_handle "$input"); then
+    printf 'https://www.youtube.com/%s/live' "$handle"; return
+  fi
+  if [[ "$input" == @* && "$input" != *[[:space:]]* ]]; then
+    printf 'https://www.youtube.com/%s/live' "$input"; return
   fi
   if command -v fzf >/dev/null 2>&1; then
     local pick
