@@ -1,5 +1,7 @@
 # nonton — watch YouTube in your terminal, not a browser tab
 
+**English** · [Bahasa Indonesia](README.id.md)
+
 ![shell: bash](https://img.shields.io/badge/shell-bash-4EAA25?logo=gnubash&logoColor=white)
 ![platform: macOS / Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple&logoColor=white)
 ![player: mpv + yt-dlp](https://img.shields.io/badge/player-mpv%20%2B%20yt--dlp-purple)
